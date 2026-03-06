@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Migrationsstationen - Advanced Template</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        #map { height: 100vh; width: 100vw; }
+        .custom-overlay { z-index: 1000; }
+        .custom-div-icon { overflow: visible !important; }
+
+        .number-icon-wrapper {
+            color: white; border-radius: 50%; width: 28px; height: 28px;
+            display: flex; justify-content: center; align-items: center;
+            font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            font-size: 14px; transition: border-radius 0.2s ease, transform 0.2s ease;
+            position: absolute; top: 0; left: 0; transform: translate(-50%, -50%);
+        }
+
+        .number-icon-wrapper.offset-tr { border-radius: 50% 50% 50% 0; transform: translate(2px, calc(-100% - 2px)); }
+        .number-icon-wrapper.offset-tl { border-radius: 50% 50% 0 50%; transform: translate(calc(-100% - 2px), calc(-100% - 2px)); }
+        .number-icon-wrapper.offset-br { border-radius: 0 50% 50% 50%; transform: translate(2px, 2px); }
+        .number-icon-wrapper.offset-bl { border-radius: 50% 0 50% 50%; transform: translate(calc(-100% - 2px), 2px); }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Neuer Resize-Griff */
+        .resize-handle {
+            position: absolute; bottom: 0; right: 0; width: 24px; height: 24px;
+            cursor: nwse-resize; z-index: 1001;
+            background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.1) 50%);
+            border-bottom-right-radius: 1rem;
+        }
+        .resize-handle:hover { background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.2) 50%); }
+    </style>
+</head>
+<body class="m-0 p-0 overflow-hidden font-sans bg-gray-100 text-gray-800">
+
+    <!-- Hauptkarte -->
+    <div id="map"></div>
+
+    <!-- Container für die dynamischen Zusatzkarten -->
+    <div id="extra-maps-container"></div>
+
+    <!-- Dynamische Linien (SVG Layer) -->
+    <svg id="transatlantic-lines" class="fixed top-0 left-0 w-full h-full pointer-events-none z-[2000]"></svg>
+
+    <!-- Infobox / Legende oben rechts -->
+    <div class="custom-overlay absolute top-4 right-4 md:top-6 md:right-6 bg-white/95 backdrop-blur-sm p-5 rounded-2xl shadow-xl border border-gray-100 max-w-xs transition-all flex flex-col max-h-[90vh]">
+        <div class="flex justify-between items-center mb-3 border-b border-gray-200 pb-2 shrink-0">
+            <h2 class="text-lg font-bold">Die Reise</h2>
+            <button onclick="toggleEditModal()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-md font-medium transition-colors shadow-sm" title="Drücke 'F' zum Bearbeiten">Edit (F)</button>
+        </div>
+        <ul id="legend-list" class="space-y-2 text-sm text-gray-600 font-medium overflow-y-auto custom-scrollbar flex-grow pr-2">
+            <!-- Wird per JS gefüllt -->
+        </ul>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="hidden fixed inset-0 z-[3000] bg-gray-900/60 backdrop-blur-sm flex items-center justify-center opacity-0 transition-opacity duration-300 p-4">
+        <div class="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] shadow-2xl flex flex-col transform scale-95 transition-transform duration-300" id="edit-modal-content">
+            <!-- Header -->
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl shrink-0">
+                <h2 class="text-xl font-bold">Inhalte bearbeiten</h2>
+                <button onclick="toggleEditModal()" class="text-gray-400 hover:text-gray-700 p-2 rounded-full hover:bg-gray-200 transition-colors">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            
+            <!-- Body -->
+            <div class="p-6 overflow-y-auto custom-scrollbar flex-grow grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Spalte 1: Stationen -->
+                <div>
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-blue-600">📍 Stationen</h3>
+                        <button onclick="addStation()" class="text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-1 rounded font-semibold transition-colors">+ Neu</button>
+                    </div>
+                    <div id="edit-stations-container" class="space-y-4"></div>
+                </div>
+
+                <!-- Spalte 2: Zusatzkarten -->
+                <div>
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-green-600">🗺️ Zusatzkarten</h3>
+                        <button onclick="addExtraMap()" class="text-xs bg-green-100 text-green-700 hover:bg-green-200 px-2 py-1 rounded font-semibold transition-colors">+ Neu</button>
+                    </div>
+                    <div id="edit-maps-container" class="space-y-4"></div>
+                    <p class="text-xs text-gray-500 mt-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                        Hinweis: Du kannst die Fenster der Zusatzkarten auf dem Hauptbildschirm frei verschieben und an der unteren rechten Ecke in der Grösse anpassen.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex justify-end gap-3 shrink-0">
+                <button onclick="toggleEditModal()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Abbrechen</button>
+                <button onclick="saveAndRender()" class="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm transition-colors">Speichern & Anwenden</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // --- State Management (Zentraler Zustand) ---
+        let state = {
+            extraMaps: [
+                { id: 'ext-usa', name: "Übersee", center: [42.814, -73.939], zoom: 6, w: 280, h: 280, x: 32, y: window.innerHeight - 312 }
+            ],
+            stations: [
+                { id: 's1', name: "1. Startpunkt", coords: [47.425, 9.616], mapId: 'main' },
+                { id: 's2', name: "2. Bergdorf", coords: [46.802, 9.836], mapId: 'main' },
+                { id: 's3', name: "3. Grossstadt", coords: [47.376, 8.541], mapId: 'main' },
+                { id: 's4', name: "4. Übersee-Metropole", coords: [42.814, -73.939], mapId: 'ext-usa' },
+                { id: 's5', name: "5. Forschungsinstitut", coords: [47.536, 8.222], mapId: 'main' },
+                { id: 's6', name: "6. Zwischenstation", coords: [47.493, 8.341], mapId: 'main' },
+                { id: 's7', name: "7. Wohnort", coords: [47.481, 8.219], mapId: 'main' },
+                { id: 's8', name: "8. Neues Ziel", coords: [47.458, 8.209], mapId: 'main' }
+            ]
+        };
+
+        const colors = ['#ef4444', '#f97316', '#eab308', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#14b8a6', '#f43f5e'];
+
+        // Instanzen speichern
+        let mapInstances = { main: null };
+        let layerGroups = { main: null };
+
+        // Helfer-Funktion für IDs
+        function generateId() { return Math.random().toString(36).substr(2, 9); }
+
+        window.onload = function() {
+            // 1. Hauptkarte initialisieren
+            mapInstances.main = L.map('map').setView([47.0, 8.0], 5);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(mapInstances.main);
+            layerGroups.main = L.layerGroup().addTo(mapInstances.main);
+
+            // Events für die Hauptkarte
+            mapInstances.main.on('move', updateGraphics);
+            mapInstances.main.on('zoom', updateGraphics);
+            window.addEventListener('resize', updateGraphics);
+
+            // Shortcut
+            document.addEventListener('keydown', (e) => {
+                if ((e.key === 'f' || e.key === 'F') && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
+                    e.preventDefault(); toggleEditModal();
+                }
+            });
+
+            // Erster Aufbau
+            syncExtraMapsDOM();
+            renderAll();
+        };
+
+        // --- DOM Sync für Zusatzkarten ---
+        function syncExtraMapsDOM() {
+            const container = document.getElementById('extra-maps-container');
+            
+            // Lösche entfernte Karten sauber aus dem DOM und dem Speicher
+            for (const id in mapInstances) {
+                if (id !== 'main' && !state.extraMaps.find(m => m.id === id)) {
+                    mapInstances[id].remove();
+                    delete mapInstances[id];
+                    delete layerGroups[id];
+                    const el = document.getElementById(`container-${id}`);
+                    if (el) el.remove();
+                }
+            }
+
+            // Erstelle/Update neue Karten
+            state.extraMaps.forEach(ext => {
+                let el = document.getElementById(`container-${ext.id}`);
+                if (!el) {
+                    // Neues DOM Element bauen
+                    el = document.createElement('div');
+                    el.id = `container-${ext.id}`;
+                    // WICHTIG: absolute top-0 left-0 stellt sicher, dass translate3d exakt berechnet werden kann (Fixt den Verbindungs-Bug)
+                    el.className = "absolute top-0 left-0 border-4 border-white rounded-2xl shadow-2xl overflow-hidden z-[1000] will-change-transform flex flex-col bg-white";
+                    el.style.width = ext.w + 'px';
+                    el.style.height = ext.h + 'px';
+                    // Positionierung per Transform ist performanter beim Draggen
+                    el.style.transform = `translate3d(${ext.x}px, ${ext.y}px, 0)`;
+                    
+                    el.innerHTML = `
+                        <div id="drag-${ext.id}" class="absolute top-2 left-2 z-[1001] bg-white/95 px-3 py-1.5 rounded-md text-xs font-bold text-gray-800 shadow-md cursor-grab flex items-center gap-2 border border-gray-200 hover:bg-white pointer-events-auto">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                            <span id="title-${ext.id}">${ext.name}</span>
+                        </div>
+                        <div id="map-${ext.id}" class="w-full h-full z-0"></div>
+                        <div class="resize-handle" id="resize-${ext.id}"></div>
+                    `;
+                    container.appendChild(el);
+
+                    // Leaflet Instanz für diese Box
+                    const inst = L.map(`map-${ext.id}`, { zoomControl: false, attributionControl: false }).setView(ext.center, ext.zoom);
+                    L.control.zoom({ position: 'bottomleft' }).addTo(inst);
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(inst);
+                    
+                    mapInstances[ext.id] = inst;
+                    layerGroups[ext.id] = L.layerGroup().addTo(inst);
+
+                    // Events
+                    inst.on('move', () => { ext.center = inst.getCenter(); updateGraphics(); });
+                    inst.on('zoom', () => { ext.zoom = inst.getZoom(); updateGraphics(); });
+
+                    // Eigene Drag & Resize Logik anbinden
+                    setupWindowInteractions(ext, el, inst);
+
+                } else {
+                    // Update Title falls geändert
+                    document.getElementById(`title-${ext.id}`).innerText = ext.name;
+                }
+            });
+        }
+
+        // --- Drag und Resize Logik für Fenster ---
+        function setupWindowInteractions(extMapData, containerEl, leafletInst) {
+            const dragHandle = containerEl.querySelector(`#drag-${extMapData.id}`);
+            const resizeHandle = containerEl.querySelector(`#resize-${extMapData.id}`);
+            
+            // --- Dragging ---
+            let isDragging = false, startX, startY;
+            
+            const onDragStart = (e) => {
+                isDragging = true;
+                dragHandle.classList.replace('cursor-grab', 'cursor-grabbing');
+                // Touch vs Mouse
+                const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+                const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+                startX = clientX - extMapData.x;
+                startY = clientY - extMapData.y;
+                e.stopPropagation();
+            };
+            
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                e.preventDefault();
+                const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+                const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+                extMapData.x = clientX - startX;
+                extMapData.y = clientY - startY;
+                containerEl.style.transform = `translate3d(${extMapData.x}px, ${extMapData.y}px, 0)`;
+                updateGraphics();
+            };
+            
+            const onDragEnd = () => {
+                isDragging = false;
+                dragHandle.classList.replace('cursor-grabbing', 'cursor-grab');
+            };
+
+            dragHandle.addEventListener('mousedown', onDragStart);
+            dragHandle.addEventListener('touchstart', onDragStart, {passive: false});
+            document.addEventListener('mousemove', onDrag);
+            document.addEventListener('touchmove', onDrag, {passive: false});
+            document.addEventListener('mouseup', onDragEnd);
+            document.addEventListener('touchend', onDragEnd);
+
+            // --- Resizing ---
+            let isResizing = false, startW, startH, rsStartX, rsStartY;
+            
+            const onResizeStart = (e) => {
+                isResizing = true;
+                const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+                const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+                rsStartX = clientX; rsStartY = clientY;
+                startW = extMapData.w; startH = extMapData.h;
+                e.stopPropagation();
+                e.preventDefault();
+            };
+
+            const onResize = (e) => {
+                if (!isResizing) return;
+                const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+                const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+                
+                extMapData.w = Math.max(150, startW + (clientX - rsStartX));
+                extMapData.h = Math.max(150, startH + (clientY - rsStartY));
+                
+                containerEl.style.width = extMapData.w + 'px';
+                containerEl.style.height = extMapData.h + 'px';
+                leafletInst.invalidateSize(); // Wichtig für Leaflet!
+                updateGraphics();
+            };
+
+            const onResizeEnd = () => isResizing = false;
+
+            resizeHandle.addEventListener('mousedown', onResizeStart);
+            resizeHandle.addEventListener('touchstart', onResizeStart, {passive: false});
+            document.addEventListener('mousemove', onResize);
+            document.addEventListener('touchmove', onResize, {passive: false});
+            document.addEventListener('mouseup', onResizeEnd);
+            document.addEventListener('touchend', onResizeEnd);
+        }
+
+        // --- Marker und Linien zeichnen ---
+        function renderAll() {
+            // Alle Layer leeren
+            for (const id in layerGroups) layerGroups[id].clearLayers();
+            const legendList = document.getElementById('legend-list');
+            legendList.innerHTML = '';
+            document.getElementById('transatlantic-lines').innerHTML = ''; // SVG leeren
+
+            const latlngsMain = [];
+
+            // 1. Marker platzieren
+            state.stations.forEach((station, index) => {
+                const step = index + 1;
+                const color = colors[index % colors.length];
+                
+                // Legende
+                const li = document.createElement('li');
+                li.className = 'flex items-center justify-between gap-2 border-b border-gray-100 last:border-0 pb-1 last:pb-0';
+                const mapName = station.mapId === 'main' ? 'Hauptkarte' : (state.extraMaps.find(m => m.id === station.mapId)?.name || 'Unbekannt');
+                li.innerHTML = `
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <span class="w-3 h-3 rounded-full shrink-0 shadow-sm" style="background-color: ${color}"></span>
+                        <span class="truncate">${station.name}</span>
+                    </div>
+                    <span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 shrink-0">${mapName}</span>
+                `;
+                legendList.appendChild(li);
+
+                // Leaflet Marker Icon
+                const icon = L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div style="position:relative; width:0; height:0;"><div id="marker-icon-${station.id}" class="number-icon-wrapper" style="background-color: ${color};">${step}</div></div>`,
+                    iconSize: [0, 0], iconAnchor: [0, 0], popupAnchor: [0, -35]
+                });
+
+                const targetLayer = layerGroups[station.mapId];
+                if (targetLayer) {
+                    const marker = L.marker(station.coords, { icon }).addTo(targetLayer);
+                    marker.bindPopup(`<strong class="font-sans block text-gray-800" style="color: ${color}">${station.name}</strong>`);
+                    
+                    if (station.mapId === 'main') latlngsMain.push(station.coords);
+                }
+            });
+
+            // Focus Hauptkarte
+            if (latlngsMain.length > 0) {
+                mapInstances.main.fitBounds(L.polyline(latlngsMain).getBounds(), { padding: [50, 50] });
+            }
+            
+            // Focus Extrakarten
+            state.extraMaps.forEach(ext => {
+                const mapStations = state.stations.filter(s => s.mapId === ext.id);
+                if (mapStations.length > 0 && mapInstances[ext.id]) {
+                    const poly = L.polyline(mapStations.map(s => s.coords));
+                    mapInstances[ext.id].fitBounds(poly.getBounds(), { padding: [20, 20], maxZoom: ext.zoom || 6 });
+                }
+            });
+
+            // Ein wenig warten bis DOM Marker gemalt hat, dann Grafiken anpassen
+            setTimeout(updateGraphics, 50);
+        }
+
+        // --- Grafik Update (Kollisionen + SVG Linien) ---
+        function updateGraphics() {
+            // 1. Kollisionen pro Karte berechnen
+            for (const mapId in mapInstances) {
+                const occ = [];
+                const mapStations = state.stations.filter(s => s.mapId === mapId);
+                const inst = mapInstances[mapId];
+                
+                mapStations.forEach((station) => {
+                    const el = document.getElementById(`marker-icon-${station.id}`);
+                    if (!el) return;
+                    
+                    const pt = inst.latLngToContainerPoint(station.coords);
+                    const states = [
+                        { cls: '', dx: 0, dy: 0 }, { cls: 'offset-tr', dx: 16, dy: -16 },
+                        { cls: 'offset-tl', dx: -16, dy: -16 }, { cls: 'offset-br', dx: 16, dy: 16 },
+                        { cls: 'offset-bl', dx: -16, dy: 16 }
+                    ];
+
+                    let placed = false;
+                    for (let s of states) {
+                        const tx = pt.x + s.dx, ty = pt.y + s.dy;
+                        if (!occ.some(o => Math.hypot(tx - o.x, ty - o.y) < 26)) {
+                            el.className = `number-icon-wrapper ${s.cls}`;
+                            occ.push({ x: tx, y: ty });
+                            placed = true; break;
+                        }
+                    }
+                    if (!placed) {
+                        el.className = `number-icon-wrapper offset-tr`;
+                        occ.push({ x: pt.x + 16, y: pt.y - 16 });
+                    }
+                });
+            }
+
+            // 2. Linien zeichnen
+            const svgLayer = document.getElementById('transatlantic-lines');
+            svgLayer.innerHTML = '';
+            
+            // Alte Polylines entfernen
+            for (const id in layerGroups) {
+                layerGroups[id].eachLayer(layer => {
+                    if (layer instanceof L.Polyline) layerGroups[id].removeLayer(layer);
+                });
+            }
+
+            const lineOpt = { color: '#3b82f6', weight: 3, dashArray: '8, 8', opacity: 0.8 };
+
+            for (let i = 0; i < state.stations.length - 1; i++) {
+                const sA = state.stations[i];
+                const sB = state.stations[i+1];
+
+                if (sA.mapId === sB.mapId) {
+                    // Gleiche Karte -> Leaflet Polyline
+                    if (layerGroups[sA.mapId]) {
+                        L.polyline([sA.coords, sB.coords], lineOpt).addTo(layerGroups[sA.mapId]);
+                    }
+                } else {
+                    // Unterschiedliche Karte -> SVG Linie quer über den Bildschirm
+                    const pA = getGlobalPos(sA);
+                    const pB = getGlobalPos(sB);
+                    if (pA && pB) {
+                        const rA = document.getElementById(`marker-icon-${sA.id}`)?.className.includes('offset') ? 0 : 16;
+                        const rB = document.getElementById(`marker-icon-${sB.id}`)?.className.includes('offset') ? 0 : 16;
+                        
+                        const start = getEdgePoint(pA, pB, rA);
+                        const end = getEdgePoint(pB, pA, rB);
+
+                        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                        path.setAttribute('d', `M ${start.x} ${start.y} L ${end.x} ${end.y}`);
+                        path.setAttribute('stroke', '#3b82f6');
+                        path.setAttribute('stroke-width', '3');
+                        path.setAttribute('stroke-dasharray', '8, 8');
+                        path.setAttribute('fill', 'none');
+                        path.setAttribute('stroke-linecap', 'round');
+                        svgLayer.appendChild(path);
+                    }
+                }
+            }
+        }
+
+        // Helfer für Globale Pixelkoordinaten
+        function getGlobalPos(station) {
+            const inst = mapInstances[station.mapId];
+            if (!inst) return null;
+            const pt = inst.latLngToContainerPoint(station.coords);
+            if (station.mapId === 'main') return pt;
+            
+            // Für Zusatzkarten: getBoundingClientRect nutzen für akkurate Bildschirm-Koordinaten (Fixt den Linien-Bug)
+            const el = document.getElementById(`container-${station.mapId}`);
+            if (!el) return null;
+            const rect = el.getBoundingClientRect();
+            
+            return { x: pt.x + rect.left, y: pt.y + rect.top };
+        }
+
+        function getEdgePoint(p1, p2, r) {
+            const dx = p2.x - p1.x, dy = p2.y - p1.y, len = Math.hypot(dx, dy);
+            if (len === 0) return p1;
+            return { x: p1.x + (dx / len) * r, y: p1.y + (dy / len) * r };
+        }
+
+        // --- Editor & State Logik ---
+        
+        // Liest die gerade im Formular getippten Werte aus und speichert sie in den State
+        // So geht nichts verloren, wenn man dazwischen etwas löscht oder hinzufügt.
+        function saveCurrentInputsToState() {
+            state.extraMaps.forEach(m => {
+                const nameInput = document.getElementById(`map-name-${m.id}`);
+                if (nameInput) m.name = nameInput.value;
+            });
+            state.stations.forEach(s => {
+                const n = document.getElementById(`stat-name-${s.id}`);
+                const lat = document.getElementById(`stat-lat-${s.id}`);
+                const lng = document.getElementById(`stat-lng-${s.id}`);
+                const mapId = document.getElementById(`stat-map-${s.id}`);
+                
+                if(n) s.name = n.value;
+                if(lat && lng && !isNaN(parseFloat(lat.value)) && !isNaN(parseFloat(lng.value))) {
+                    s.coords = [parseFloat(lat.value), parseFloat(lng.value)];
+                }
+                if(mapId) s.mapId = mapId.value;
+            });
+        }
+
+        function toggleEditModal() {
+            const modal = document.getElementById('edit-modal');
+            const content = document.getElementById('edit-modal-content');
+            if (modal.classList.contains('hidden')) {
+                buildEditForms();
+                modal.classList.remove('hidden');
+                setTimeout(() => { modal.classList.remove('opacity-0'); content.classList.remove('scale-95'); }, 10);
+            } else {
+                modal.classList.add('opacity-0'); content.classList.add('scale-95');
+                setTimeout(() => modal.classList.add('hidden'), 300);
+            }
+        }
+
+        function buildEditForms() {
+            // 1. Karten Editor
+            const mapsContainer = document.getElementById('edit-maps-container');
+            mapsContainer.innerHTML = '';
+            state.extraMaps.forEach(map => {
+                mapsContainer.innerHTML += `
+                    <div class="p-3 bg-white border border-gray-200 rounded-lg shadow-sm flex items-center gap-3">
+                        <div class="flex-grow">
+                            <input type="text" id="map-name-${map.id}" value="${map.name}" class="w-full text-sm font-semibold border-none focus:ring-0 p-0" placeholder="Karten Name">
+                            <span class="text-[10px] text-gray-400 uppercase">ID: ${map.id}</span>
+                        </div>
+                        <button onclick="deleteExtraMap('${map.id}')" class="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded transition-colors" title="Karte löschen">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    </div>
+                `;
+            });
+
+            // 2. Stationen Editor
+            const statContainer = document.getElementById('edit-stations-container');
+            statContainer.innerHTML = '';
+            
+            // Map Options für Select aufbauen
+            let mapOptions = `<option value="main">Hauptkarte</option>`;
+            state.extraMaps.forEach(m => mapOptions += `<option value="${m.id}">${m.name}</option>`);
+
+            state.stations.forEach((stat, i) => {
+                // Pre-select the correct map
+                const opts = mapOptions.replace(`value="${stat.mapId}"`, `value="${stat.mapId}" selected`);
+                
+                statContainer.innerHTML += `
+                    <div class="p-4 bg-white border border-gray-200 rounded-lg shadow-sm relative">
+                        <div class="absolute top-4 right-4 text-gray-300 font-bold text-xl opacity-30">#${i+1}</div>
+                        <input type="text" id="stat-name-${stat.id}" value="${stat.name}" class="w-full font-bold text-gray-800 mb-3 border-b border-gray-100 focus:border-blue-500 focus:outline-none pb-1" placeholder="Stationsname">
+                        
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div><label class="text-[10px] uppercase text-gray-500 font-bold">Lat</label><input type="number" step="any" id="stat-lat-${stat.id}" value="${stat.coords[0]}" class="w-full text-sm bg-gray-50 border border-gray-200 rounded px-2 py-1"></div>
+                            <div><label class="text-[10px] uppercase text-gray-500 font-bold">Lng</label><input type="number" step="any" id="stat-lng-${stat.id}" value="${stat.coords[1]}" class="w-full text-sm bg-gray-50 border border-gray-200 rounded px-2 py-1"></div>
+                        </div>
+
+                        <div class="flex justify-between items-end gap-3 mt-4 pt-3 border-t border-gray-100">
+                            <div class="flex-grow">
+                                <label class="text-[10px] uppercase text-gray-500 font-bold block mb-1">Zeigen auf Karte</label>
+                                <select id="stat-map-${stat.id}" class="w-full text-sm bg-gray-50 border border-gray-200 rounded px-2 py-1">${opts}</select>
+                            </div>
+                            <button onclick="deleteStation('${stat.id}')" class="text-xs text-red-500 font-medium hover:bg-red-50 px-2 py-1.5 rounded transition-colors border border-red-100 shrink-0">Löschen</button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        // Daten verändern (Neu / Löschen)
+        function addExtraMap() {
+            saveCurrentInputsToState();
+            const id = 'ext-' + generateId();
+            state.extraMaps.push({ id, name: "Neue Zusatzkarte", center: [0, 0], zoom: 3, w: 250, h: 250, x: 50 + state.extraMaps.length * 20, y: window.innerHeight - 350 });
+            buildEditForms();
+            syncExtraMapsDOM();
+            renderAll();
+        }
+
+        function deleteExtraMap(id) {
+            if(confirm("Zusatzkarte wirklich löschen? Stationen darauf werden auf die Hauptkarte verschoben.")) {
+                saveCurrentInputsToState();
+                state.extraMaps = state.extraMaps.filter(m => m.id !== id);
+                state.stations.forEach(s => { if(s.mapId === id) s.mapId = 'main'; });
+                buildEditForms();
+                syncExtraMapsDOM();
+                renderAll();
+            }
+        }
+
+        function addStation() {
+            saveCurrentInputsToState();
+            const id = 's' + generateId();
+            const last = state.stations[state.stations.length - 1];
+            const coords = last ? [...last.coords] : [47.0, 8.0];
+            state.stations.push({ id, name: `${state.stations.length + 1}. Neue Station`, coords, mapId: 'main' });
+            buildEditForms();
+            renderAll();
+        }
+
+        function deleteStation(id) {
+            saveCurrentInputsToState();
+            state.stations = state.stations.filter(s => s.id !== id);
+            buildEditForms();
+            renderAll();
+        }
+
+        // Speichern und Anwenden
+        function saveAndRender() {
+            saveCurrentInputsToState();
+            toggleEditModal();
+            syncExtraMapsDOM(); 
+            renderAll();        
+        }
+    </script>
+</body>
+</html>
